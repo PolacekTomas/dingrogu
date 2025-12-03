@@ -28,7 +28,7 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.ProcessStage;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.rex.api.TaskEndpoint;
 import org.jboss.pnc.rex.dto.ServerResponseDTO;
 import org.jboss.pnc.rex.dto.TaskDTO;
@@ -40,16 +40,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class BuildDriverAdapter implements Adapter<BuildDriverDTO> {
+public class BuildDriverAdapter extends AbstractAdapter<BuildDriverDTO, BuildCompleted> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
 
     @Inject
     ObjectMapper objectMapper;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     BuildDriverProducer buildDriverProducer;
@@ -116,36 +113,23 @@ public class BuildDriverAdapter implements Adapter<BuildDriverDTO> {
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
+    protected Class<BuildCompleted> getCallbackType() {
+        return BuildCompleted.class;
+    }
+
+    @Override
+    protected CallbackDecision evaluate(BuildCompleted r) {
         ProcessStageUtils.logProcessStageEnd(ProcessStage.BUILD_SETTING_UP.name(), "Build completed.");
-        try {
-            BuildCompleted response = objectMapper.convertValue(object, BuildCompleted.class);
-            Log.infof("Build response: %s", response);
-            try {
-                if (response == null || response.getBuildStatus() == null) {
-                    Log.error("Build response or status is null: " + response);
-                    callbackEndpoint.fail(getRexTaskName(correlationId), response, null, null);
-                    return;
-                }
-                switch (response.getBuildStatus()) {
-                    case SUCCESS -> callbackEndpoint.succeed(getRexTaskName(correlationId), response, null, null);
-                    // no rollback
-                    case FAILED ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), response, null, Set.of(SKIP_ROLLBACK));
-                    // with rollback (if configured)
-                    case TIMED_OUT, CANCELLED, SYSTEM_ERROR ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), response, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
+        Log.infof("Build response: %s", r);
+        if (r == null || r.getBuildStatus() == null) {
+            Log.error("Build response or status is null: " + r);
+            return CallbackDecision.fail();
         }
+        return switch (r.getBuildStatus()) {
+            case SUCCESS -> CallbackDecision.ok();
+            case FAILED -> CallbackDecision.fail(Set.of(SKIP_ROLLBACK)); // no rollback
+            case TIMED_OUT, CANCELLED, SYSTEM_ERROR -> CallbackDecision.fail(); // with rollback (if configured)
+        };
     }
 
     @Override

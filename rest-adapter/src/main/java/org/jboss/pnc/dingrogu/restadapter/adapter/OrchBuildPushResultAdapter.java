@@ -17,8 +17,8 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.OrchBuildPushResultDTO;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.OrchClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 
@@ -27,7 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class OrchBuildPushResultAdapter implements Adapter<OrchBuildPushResultDTO> {
+public class OrchBuildPushResultAdapter extends AbstractAdapter<OrchBuildPushResultDTO, ResultStatus> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
@@ -40,9 +40,6 @@ public class OrchBuildPushResultAdapter implements Adapter<OrchBuildPushResultDT
 
     @Inject
     OrchClient orchClient;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Override
     public String getAdapterName() {
@@ -81,26 +78,13 @@ public class OrchBuildPushResultAdapter implements Adapter<OrchBuildPushResultDT
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
-        try {
-            ResultStatus resultStatus = objectMapper.convertValue(object, ResultStatus.class);
-            try {
-                if (resultStatus != null && resultStatus.isSuccess()) {
-                    callbackEndpoint.succeed(getRexTaskName(correlationId), object, null, null);
-                } else {
-                    callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            // if we cannot cast object to ResultStatus, it's probably a failure
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
-        }
+    protected Class<ResultStatus> getCallbackType() {
+        return ResultStatus.class;
+    }
+
+    @Override
+    protected CallbackDecision evaluate(ResultStatus r) {
+        return r.isSuccess() ? CallbackDecision.ok() : CallbackDecision.fail();
     }
 
     /**

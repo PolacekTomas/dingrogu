@@ -15,9 +15,9 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.DelAAnalyzeResponse;
 import org.jboss.pnc.dingrogu.api.dto.adapter.DeliverablesAnalyzerDTO;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.DeliverablesAnalyzerClient;
 import org.jboss.pnc.dingrogu.restadapter.client.GenericClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.api.TaskEndpoint;
 import org.jboss.pnc.rex.dto.ServerResponseDTO;
 import org.jboss.pnc.rex.dto.TaskDTO;
@@ -29,7 +29,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class DeliverablesAnalyzerAdapter implements Adapter<DeliverablesAnalyzerDTO> {
+public class DeliverablesAnalyzerAdapter extends AbstractAdapter<DeliverablesAnalyzerDTO, AnalysisReport> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
@@ -39,9 +39,6 @@ public class DeliverablesAnalyzerAdapter implements Adapter<DeliverablesAnalyzer
 
     @Inject
     ObjectMapper objectMapper;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     TaskEndpoint taskEndpoint;
@@ -75,26 +72,13 @@ public class DeliverablesAnalyzerAdapter implements Adapter<DeliverablesAnalyzer
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
-        try {
-            AnalysisReport report = objectMapper.convertValue(object, AnalysisReport.class);
-            try {
-                if (report != null && report.isSuccess()) {
-                    callbackEndpoint.succeed(getRexTaskName(correlationId), report, null, null);
-                } else {
-                    callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            // if we cannot cast object to AnalysisReport, it's probably a failure
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
-        }
+    protected Class<AnalysisReport> getCallbackType() {
+        return AnalysisReport.class;
+    }
+
+    @Override
+    protected CallbackDecision evaluate(AnalysisReport r) {
+        return r.isSuccess() ? CallbackDecision.ok() : CallbackDecision.fail();
     }
 
     @Override

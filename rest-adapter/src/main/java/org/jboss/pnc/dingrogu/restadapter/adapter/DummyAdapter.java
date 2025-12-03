@@ -11,8 +11,8 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.DummyDTO;
 import org.jboss.pnc.dingrogu.api.dto.dummy.DummyServiceResponseDTO;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.DummyClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 
@@ -27,16 +27,13 @@ import lombok.extern.slf4j.Slf4j;
  */
 @ApplicationScoped
 @Slf4j
-public class DummyAdapter implements Adapter<DummyDTO> {
+public class DummyAdapter extends AbstractAdapter<DummyDTO, DummyServiceResponseDTO> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
 
     @Inject
     DummyClient dummyClient;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     ObjectMapper objectMapper;
@@ -59,14 +56,14 @@ public class DummyAdapter implements Adapter<DummyDTO> {
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
-        DummyServiceResponseDTO response = objectMapper.convertValue(object, DummyServiceResponseDTO.class);
-        Log.infof("DummyService replied with: %s", response.status);
-        try {
-            callbackEndpoint.succeed(getRexTaskName(correlationId), response, null, null);
-        } catch (Exception e) {
-            Log.error("Error happened in callback adapter", e);
-        }
+    protected Class<DummyServiceResponseDTO> getCallbackType() {
+        return DummyServiceResponseDTO.class;
+    }
+
+    @Override
+    protected CallbackDecision evaluate(DummyServiceResponseDTO r) {
+        Log.infof("DummyService replied with: %s", r.status);
+        return CallbackDecision.ok();
     }
 
     @Override

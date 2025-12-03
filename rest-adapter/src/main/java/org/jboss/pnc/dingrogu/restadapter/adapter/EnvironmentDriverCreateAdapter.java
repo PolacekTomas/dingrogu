@@ -24,7 +24,7 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.ProcessStage;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.rex.api.TaskEndpoint;
 import org.jboss.pnc.rex.common.enums.State;
 import org.jboss.pnc.rex.dto.ServerResponseDTO;
@@ -37,16 +37,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class EnvironmentDriverCreateAdapter implements Adapter<EnvironmentDriverCreateDTO> {
+public class EnvironmentDriverCreateAdapter extends AbstractAdapter<EnvironmentDriverCreateDTO, EnvironmentCreateResult> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
 
     @Inject
     ObjectMapper objectMapper;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     EnvironmentDriverProducer environmentDriverProducer;
@@ -113,35 +110,20 @@ public class EnvironmentDriverCreateAdapter implements Adapter<EnvironmentDriver
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
-        ProcessStageUtils.logProcessStageEnd(ProcessStage.BUILD_ENV_SETTING_UP.name(), "Build environment prepared.");
-        try {
-            EnvironmentCreateResult response = objectMapper.convertValue(object, EnvironmentCreateResult.class);
-            Log.infof("Environment create response: %s", response);
-            try {
-                if (response == null || response.getStatus() == null) {
-                    Log.error("Environment response or status is null: " + response);
-                    callbackEndpoint.fail(getRexTaskName(correlationId), response, null, null);
-                    return;
-                }
-                switch (response.getStatus()) {
-                    case SUCCESS -> callbackEndpoint.succeed(getRexTaskName(correlationId), response, null, null);
+    protected Class<EnvironmentCreateResult> getCallbackType() {
+        return EnvironmentCreateResult.class;
+    }
 
-                    // with rollback (if configured)
-                    // TODO should FAILED status from ENV. Driver skip rollback like in other Adapters?
-                    case FAILED, TIMED_OUT, CANCELLED, SYSTEM_ERROR ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), response, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
+    @Override
+    protected CallbackDecision evaluate(EnvironmentCreateResult r) {
+        ProcessStageUtils.logProcessStageEnd(ProcessStage.BUILD_ENV_SETTING_UP.name(), "Build environment prepared.");
+        Log.infof("Environment create response: %s", r);
+        if (r == null || r.getStatus() == null) {
+            Log.error("Environment response or status is null: " + r);
+            return CallbackDecision.fail();
         }
+        // TODO should FAILED status from ENV. Driver skip rollback like in other Adapters?
+        return r.getStatus().isSuccess() ? CallbackDecision.ok() : CallbackDecision.fail();
     }
 
     @Override

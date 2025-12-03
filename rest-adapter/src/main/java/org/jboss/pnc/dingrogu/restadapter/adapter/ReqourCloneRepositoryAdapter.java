@@ -17,8 +17,8 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.ReqourCloneRepositoryDTO;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.ReqourClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 
@@ -27,13 +27,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class ReqourCloneRepositoryAdapter implements Adapter<ReqourCloneRepositoryDTO> {
+public class ReqourCloneRepositoryAdapter extends AbstractAdapter<ReqourCloneRepositoryDTO, RepositoryCloneResponse> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     ObjectMapper objectMapper;
@@ -83,26 +80,13 @@ public class ReqourCloneRepositoryAdapter implements Adapter<ReqourCloneReposito
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
-        try {
-            RepositoryCloneResponse response = objectMapper.convertValue(object, RepositoryCloneResponse.class);
-            try {
-                if (response != null && response.getCallback().getStatus().isSuccess()) {
-                    callbackEndpoint.succeed(getRexTaskName(correlationId), object, null, null);
-                } else {
-                    callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            // if we cannot cast object to RepositoryCloneResponse, it's probably a failure
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
-        }
+    protected Class<RepositoryCloneResponse> getCallbackType() {
+        return RepositoryCloneResponse.class;
+    }
+
+    @Override
+    protected CallbackDecision evaluate(RepositoryCloneResponse r) {
+        return r.getCallback().getStatus().isSuccess() ? CallbackDecision.ok() : CallbackDecision.fail();
     }
 
     @Override

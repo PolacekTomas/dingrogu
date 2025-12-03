@@ -23,8 +23,8 @@ import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.GitUrlParser;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.ReqourClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 import org.slf4j.Logger;
@@ -35,16 +35,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class ReqourAdjustAdapter implements Adapter<ReqourAdjustDTO> {
+public class ReqourAdjustAdapter extends AbstractAdapter<ReqourAdjustDTO, AdjustResponse> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
 
     @Inject
     ObjectMapper objectMapper;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     ReqourClient reqourClient;
@@ -110,42 +107,24 @@ public class ReqourAdjustAdapter implements Adapter<ReqourAdjustDTO> {
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
+    protected Class<AdjustResponse> getCallbackType() {
+        return AdjustResponse.class;
+    }
 
-        try {
-            AdjustResponse response = objectMapper.convertValue(object, AdjustResponse.class);
-            try {
-                if (response == null || response.getCallback().getStatus() == null) {
-                    Log.error("Adjust response or status is null: " + response);
-                    callbackEndpoint.fail(getRexTaskName(correlationId), response, null, null);
-                    return;
-                }
-
-                switch (response.getCallback().getStatus()) {
-                    case SUCCESS -> {
-                        Log.infof("Adjust response: %s", response.toString());
-                        callbackEndpoint.succeed(getRexTaskName(correlationId), response, null, null);
-                    }
-
-                    // no rollback
-                    case FAILED ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), response, null, Set.of(SKIP_ROLLBACK));
-
-                    // with rollback (if configured)
-                    case TIMED_OUT, CANCELLED, SYSTEM_ERROR ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), response, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            // if we cannot cast object to AdjustResponse, it's probably a failure
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
+    @Override
+    protected CallbackDecision evaluate(AdjustResponse r) {
+        if (r == null || r.getCallback().getStatus() == null) {
+            Log.error("Adjust response or status is null: " + r);
+            return CallbackDecision.fail();
         }
+        return switch (r.getCallback().getStatus()) {
+            case SUCCESS -> {
+                Log.infof("Adjust response: %s", r.toString());
+                yield CallbackDecision.ok();
+            }
+            case FAILED -> CallbackDecision.fail(Set.of(SKIP_ROLLBACK)); // no rollback
+            case TIMED_OUT, CANCELLED, SYSTEM_ERROR -> CallbackDecision.fail(); // with rollback (if configured)
+        };
     }
 
     @Override

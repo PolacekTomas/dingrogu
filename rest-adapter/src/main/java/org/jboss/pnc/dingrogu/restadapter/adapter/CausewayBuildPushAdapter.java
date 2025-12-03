@@ -18,7 +18,7 @@ import org.jboss.pnc.dingrogu.api.client.CausewayProducer;
 import org.jboss.pnc.dingrogu.api.dto.adapter.BrewPushDTO;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 
@@ -27,15 +27,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class CausewayBuildPushAdapter implements Adapter<BrewPushDTO> {
+public class CausewayBuildPushAdapter extends AbstractAdapter<BrewPushDTO, PushResult> {
 
     private final ObjectMapper objectMapper;
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     CausewayProducer causewayProducer;
@@ -76,30 +73,21 @@ public class CausewayBuildPushAdapter implements Adapter<BrewPushDTO> {
     }
 
     @Override
-    public void callback(String correlationId, Object o) {
-        try {
+    protected Class<PushResult> getCallbackType() {
+        return PushResult.class;
+    }
 
-            PushResult pushResult = objectMapper.convertValue(o, PushResult.class);
-
-            if (pushResult == null || pushResult.getResult() == null) {
-                Log.error("Build Push response or status is null: " + pushResult);
-                callbackEndpoint.fail(getRexTaskName(correlationId), pushResult, null, null);
-                return;
-            }
-
-            switch (pushResult.getResult()) {
-                case SUCCESS -> callbackEndpoint.succeed(getRexTaskName(correlationId), pushResult, null, null);
-                // no rollback
-                case FAILED ->
-                    callbackEndpoint.fail(getRexTaskName(correlationId), pushResult, null, Set.of(SKIP_ROLLBACK));
-                // with rollback (if configured)
-                case TIMED_OUT, CANCELLED, SYSTEM_ERROR ->
-                    callbackEndpoint.fail(getRexTaskName(correlationId), pushResult, null, null);
-            }
-        } catch (Exception e) {
-            Log.error("Error while receiving callback", e);
-            callbackEndpoint.fail(getRexTaskName(correlationId), o, null, null);
+    @Override
+    protected CallbackDecision evaluate(PushResult r) {
+        if (r == null || r.getResult() == null) {
+            Log.error("Build Push response or status is null: " + r);
+            return CallbackDecision.fail();
         }
+        return switch (r.getResult()) {
+            case SUCCESS -> CallbackDecision.ok();
+            case FAILED -> CallbackDecision.fail(Set.of(SKIP_ROLLBACK)); // no rollback
+            case TIMED_OUT, CANCELLED, SYSTEM_ERROR -> CallbackDecision.fail(); // with rollback (if configured)
+        };
     }
 
     @Override

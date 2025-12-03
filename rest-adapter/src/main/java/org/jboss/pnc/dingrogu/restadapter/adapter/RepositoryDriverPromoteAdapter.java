@@ -20,8 +20,8 @@ import org.jboss.pnc.dingrogu.api.dto.adapter.RepositoryDriverPromoteDTO;
 import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.RepositoryDriverClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 
@@ -30,7 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class RepositoryDriverPromoteAdapter implements Adapter<RepositoryDriverPromoteDTO> {
+public class RepositoryDriverPromoteAdapter extends AbstractAdapter<RepositoryDriverPromoteDTO, RepositoryPromoteResult> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
@@ -40,9 +40,6 @@ public class RepositoryDriverPromoteAdapter implements Adapter<RepositoryDriverP
 
     @Inject
     ObjectMapper objectMapper;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Override
     public String getAdapterName() {
@@ -92,48 +89,28 @@ public class RepositoryDriverPromoteAdapter implements Adapter<RepositoryDriverP
         return Optional.empty();
     }
 
-    /**
-     *
-     * @param correlationId
-     * @param object callback object
-     */
     @Override
-    public void callback(String correlationId, Object object) {
-        try {
-            RepositoryPromoteResult response = objectMapper.convertValue(object, RepositoryPromoteResult.class);
-            ProcessStageUtils.logProcessStageEnd(
-                    ProcessStage.COLLECTING_RESULTS_FROM_REPOSITORY_MANAGER.name(),
-                    "Collected results from repository manager.");
+    protected Class<RepositoryPromoteResult> getCallbackType() {
+        return RepositoryPromoteResult.class;
+    }
 
-            try {
-                if (response == null || response.getStatus() == null) {
-                    Log.error("Repository promotion response or status is null: " + response);
-                    callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-                    return;
-                }
-                switch (response.getStatus()) {
-                    case SUCCESS -> {
-                        Log.infof("Repository promote response: %s", response.toString());
-                        callbackEndpoint.succeed(getRexTaskName(correlationId), object, null, null);
-                    }
-                    // no rollback (f.e. on promotion validation which is not recoverable)
-                    case FAILED ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), object, null, Set.of(SKIP_ROLLBACK));
-                    // with rollback (if configured)
-                    case TIMED_OUT, CANCELLED, SYSTEM_ERROR ->
-                        callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in callback adapter", e);
-            }
-        } catch (IllegalArgumentException e) {
-            // if we cannot cast object to AdjustResponse, it's probably a failure
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
+    @Override
+    protected CallbackDecision evaluate(RepositoryPromoteResult r) {
+        ProcessStageUtils.logProcessStageEnd(
+                ProcessStage.COLLECTING_RESULTS_FROM_REPOSITORY_MANAGER.name(),
+                "Collected results from repository manager.");
+        if (r == null || r.getStatus() == null) {
+            Log.error("Repository promotion response or status is null: " + r);
+            return CallbackDecision.fail();
         }
+        return switch (r.getStatus()) {
+            case SUCCESS -> {
+                Log.infof("Repository promote response: %s", r.toString());
+                yield CallbackDecision.ok();
+            }
+            case FAILED -> CallbackDecision.fail(Set.of(SKIP_ROLLBACK)); // no rollback
+            case TIMED_OUT, CANCELLED, SYSTEM_ERROR -> CallbackDecision.fail(); // with rollback (if configured)
+        };
     }
 
     @Override

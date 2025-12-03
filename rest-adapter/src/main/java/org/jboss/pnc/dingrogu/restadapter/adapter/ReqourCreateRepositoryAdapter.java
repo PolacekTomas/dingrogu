@@ -17,8 +17,8 @@ import org.jboss.pnc.dingrogu.api.endpoint.AdapterEndpoint;
 import org.jboss.pnc.dingrogu.api.endpoint.WorkflowEndpoint;
 import org.jboss.pnc.dingrogu.common.GitUrlParser;
 import org.jboss.pnc.dingrogu.common.TaskHelper;
+import org.jboss.pnc.dingrogu.restadapter.adapter.callback.CallbackDecision;
 import org.jboss.pnc.dingrogu.restadapter.client.ReqourClient;
-import org.jboss.pnc.rex.api.CallbackEndpoint;
 import org.jboss.pnc.rex.model.requests.StartRequest;
 import org.jboss.pnc.rex.model.requests.StopRequest;
 
@@ -27,16 +27,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
 
 @ApplicationScoped
-public class ReqourCreateRepositoryAdapter implements Adapter<ReqourCreateRepositoryDTO> {
+public class ReqourCreateRepositoryAdapter extends AbstractAdapter<ReqourCreateRepositoryDTO, InternalSCMCreationResponse> {
 
     @ConfigProperty(name = "dingrogu.url")
     String dingroguUrl;
 
     @Inject
     ObjectMapper objectMapper;
-
-    @Inject
-    CallbackEndpoint callbackEndpoint;
 
     @Inject
     ReqourClient reqourClient;
@@ -70,28 +67,21 @@ public class ReqourCreateRepositoryAdapter implements Adapter<ReqourCreateReposi
     }
 
     @Override
-    public void callback(String correlationId, Object object) {
-        try {
-            InternalSCMCreationResponse response = objectMapper.convertValue(object, InternalSCMCreationResponse.class);
-            try {
-                if (response == null || response.getStatus() == InternalSCMCreationStatus.FAILED
-                        || !response.getCallback().getStatus().isSuccess()) {
-                    callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-                } else {
-                    Log.infof("Repo creation response: %s", response.toString());
-                    callbackEndpoint.succeed(getRexTaskName(correlationId), object, null, null);
-                }
-            } catch (Exception e) {
-                Log.error("Error happened in rex client callback to Rex server for repository creation", e);
-            }
-        } catch (IllegalArgumentException e) {
-            // if we cannot cast object to InternalSCMCreationResponse, it's probably a failure
-            try {
-                callbackEndpoint.fail(getRexTaskName(correlationId), object, null, null);
-            } catch (Exception ex) {
-                Log.error("Error happened in callback adapter", ex);
-            }
+    protected Class<InternalSCMCreationResponse> getCallbackType() {
+        return InternalSCMCreationResponse.class;
+    }
+
+    @Override
+    protected CallbackDecision evaluate(InternalSCMCreationResponse r) {
+        if (r == null || r.getStatus() == InternalSCMCreationStatus.FAILED) {
+            return CallbackDecision.fail();
         }
+        Log.infof("Repo creation response: %s", r.toString());
+        return switch (r.getCallback().getStatus()) {
+            case SUCCESS -> CallbackDecision.ok();
+            // TODO should FAILED status from ENV. Driver skip rollback like in other Adapters?
+            case TIMED_OUT, CANCELLED, SYSTEM_ERROR, FAILED ->  CallbackDecision.fail();
+        };
     }
 
     /**
